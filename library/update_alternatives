@@ -1,0 +1,68 @@
+#!/usr/bin/python
+
+import subprocess
+import re
+import traceback
+
+def execute(args, module):
+    try:
+        cmd = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return cmd.communicate()
+    except (OSError, IOError), e:
+        module.fail_json(cmd=args, msg=str(e))
+    except:
+        module.fail_json(msg=traceback.format_exc())
+
+def extract_alternatives(ua_display_output):
+    alt_re = re.compile("^([^ ].*) - priority [0-9]+$", re.M)
+    return alt_re.findall(ua_display_output)
+
+def extract_active_alternative(ua_display_output):
+    active_re = re.compile("^\s*link currently points to (.*)$", re.M)
+    return active_re.search(ua_display_output).group(1)
+
+def install_alternative(link, name, path, priority, module):
+    execute(["update-alternatives", "--install", link, name, path, str(priority)], module)
+
+def set_alternative(name, path, module):
+    execute(["update-alternatives", "--set", name, path], module)
+
+def main():
+    module = AnsibleModule(
+        argument_spec = dict(
+            link      = dict(required=True),
+            name      = dict(required=True),
+            path      = dict(required=True),
+            priority  = dict(),
+        )
+    )
+
+    link = os.path.expanduser(module.params['link'])
+    name = module.params['name']
+    path = os.path.expanduser(module.params['path'])
+    priority = module.params["priority"] or 99
+
+    alt_created = False
+    alt_activated = False
+    alternatives = ""
+    active_alternative = ""
+
+    out, err = execute(["update-alternatives", "--display", name], module)
+
+    if err is not None and err is not "":
+        install_alternative(link, name, path, priority, module)
+    else:
+        alternatives = extract_alternatives(out)
+        if filter(lambda e: e == path, alternatives) == []:
+            install_alternative(link, name, path, priority, module)
+        active_alternative = extract_active_alternative(out)
+    if active_alternative != path:
+        alt_activated = True
+        set_alternative(name, path, module)
+    module.exit_json(changed=alt_activated,
+                     alternatives=alternatives,
+                     active_alternative=active_alternative)
+
+# include magic from lib/ansible/module_common.py
+#<<INCLUDE_ANSIBLE_MODULE_COMMON>>
+main()
